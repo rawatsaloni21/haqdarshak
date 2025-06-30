@@ -1,28 +1,27 @@
-# Scheme Research Tool
+# Scheme Research Tool (Free/Open-Source Version)
 
 ## 🚀 Overview
-This Streamlit web app loads URLs (pointing to PDFs of government schemes), processes and summarizes them using OpenAI embeddings, and allows users to query the schemes interactively.
+This Streamlit app processes PDF URLs of government schemes, builds a FAISS index using free sentence-transformer embeddings, and lets users ask questions using a lightweight QA model.
 
 ## 🧩 Features
-- Load and process scheme URLs
-- Summarize scheme info
-- Ask questions and get contextual answers
+- Load and process PDF URLs
+- Embeds using all-MiniLM-L6-v2 (free)
+- QA using HuggingFace's DistilBERT (no OpenAI key needed)
 
 ## ⚙️ Requirements
 ```bash
 pip install -r requirements.txt
 ```
 
-## 🗝️ API Key Setup
-Create a `.config` file:
-```
-OPENAI_API_KEY=your_openai_api_key_here
-```
-
-## 🖥️ Running the App
+## 🖥️ Run the App
 ```bash
 streamlit run main.py
 ```
+
+## 🔧 Notes
+- No OpenAI API needed
+- You can update models to larger ones if GPU is available
+
 
 ## 📂 File Structure
 - `main.py`: Streamlit frontend
