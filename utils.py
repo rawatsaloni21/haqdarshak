@@ -3,24 +3,18 @@ import pickle
 from typing import List, Tuple
 from langchain.document_loaders import UnstructuredPDFLoader
 from langchain.text_splitter import RecursiveCharacterTextSplitter
-from langchain.embeddings import OpenAIEmbeddings
 from langchain.vectorstores import FAISS
-from langchain.chains.question_answering import load_qa_chain
-from langchain.llms import OpenAI
-from PyPDF2 import PdfReader
-import tempfile
+from sentence_transformers import SentenceTransformer
+import numpy as np
 import requests
+import tempfile
+from PyPDF2 import PdfReader
+import torch
+from transformers import pipeline
 
-CONFIG_PATH = ".config"
 FAISS_INDEX_PATH = "faiss_store_openai.pkl"
-
-# Load API key
-def get_openai_api_key():
-    with open(CONFIG_PATH, "r") as file:
-        for line in file:
-            if line.startswith("OPENAI_API_KEY"):
-                return line.strip().split("=")[1]
-    raise ValueError("OPENAI_API_KEY not found in .config")
+EMBEDDING_MODEL = SentenceTransformer('all-MiniLM-L6-v2')
+QA_PIPE = pipeline("question-answering", model="distilbert-base-cased-distilled-squad")
 
 def download_pdf(url: str) -> str:
     response = requests.get(url)
@@ -29,20 +23,29 @@ def download_pdf(url: str) -> str:
         f.write(response.content)
         return f.name
 
+def extract_text_from_pdf(pdf_path: str) -> str:
+    reader = PdfReader(pdf_path)
+    text = "\n".join(page.extract_text() or "" for page in reader.pages)
+    return text
+
 def process_url_and_save_index(urls: List[str]):
-    all_docs = []
+    documents = []
     for url in urls:
         pdf_path = download_pdf(url)
-        loader = UnstructuredPDFLoader(pdf_path)
-        docs = loader.load()
-        all_docs.extend(docs)
+        text = extract_text_from_pdf(pdf_path)
         os.remove(pdf_path)
+        documents.append({"content": text, "source": url})
 
     splitter = RecursiveCharacterTextSplitter(chunk_size=1000, chunk_overlap=200)
-    chunks = splitter.split_documents(all_docs)
+    all_chunks = []
+    metadata = []
+    for doc in documents:
+        chunks = splitter.split_text(doc["content"])
+        all_chunks.extend(chunks)
+        metadata.extend([{"source": doc["source"]}] * len(chunks))
 
-    embeddings = OpenAIEmbeddings(openai_api_key=get_openai_api_key())
-    vectorstore = FAISS.from_documents(chunks, embeddings)
+    embeddings = EMBEDDING_MODEL.encode(all_chunks, convert_to_numpy=True)
+    vectorstore = FAISS.from_embeddings(embeddings=embeddings, documents=all_chunks, metadatas=metadata)
 
     with open(FAISS_INDEX_PATH, "wb") as f:
         pickle.dump(vectorstore, f)
@@ -51,9 +54,10 @@ def answer_query(query: str) -> Tuple[str, List[str]]:
     with open(FAISS_INDEX_PATH, "rb") as f:
         vectorstore = pickle.load(f)
 
-    docs = vectorstore.similarity_search(query)
-    llm = OpenAI(openai_api_key=get_openai_api_key())
-    chain = load_qa_chain(llm, chain_type="stuff")
-    answer = chain.run(input_documents=docs, question=query)
-    sources = list(set([doc.metadata.get("source", "N/A") for doc in docs]))
+    query_embedding = EMBEDDING_MODEL.encode([query])[0]
+    docs_and_scores = vectorstore.similarity_search_with_score_by_vector(query_embedding, k=4)
+    top_chunks = [doc for doc, score in docs_and_scores]
+    combined_context = "\n".join(top_chunks)
+    answer = QA_PIPE(question=query, context=combined_context)['answer']
+    sources = list(set([doc.metadata.get("source", "N/A") for doc, _ in docs_and_scores]))
     return answer, sources
